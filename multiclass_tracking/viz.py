@@ -104,8 +104,13 @@ class Visualizer:
         
         #visualize detections
         for detection in detections:
-            fill_rect = Rectangle((detection['bbox'][0],detection['bbox'][1]),detection['bbox'][2],detection['bbox'][3],linewidth=2,edgecolor='none', facecolor='w', alpha=0.5)
-            rect = Rectangle((detection['bbox'][0],detection['bbox'][1]),detection['bbox'][2],detection['bbox'][3],linewidth=2,edgecolor=self.colors_box[detection['category_id']],facecolor='none')
+            
+            bbox = detection['bbox']
+            bbox_width = bbox[2]-bbox[0]+1
+            bbox_height = bbox[3]-bbox[1]+1
+            
+            fill_rect = Rectangle((bbox[0], bbox[1]),bbox_width,bbox_height,linewidth=2,edgecolor='none', facecolor='w', alpha=0.5)
+            rect = Rectangle((bbox[0], bbox[1]),bbox_width,bbox_height,linewidth=2,edgecolor=self.colors_box[detection['category_id']],facecolor='none')
             self.ax2.add_artist(fill_rect)
             self.ax2.add_artist(rect)
             
@@ -120,12 +125,9 @@ class Visualizer:
         #visualize tracks
         for track in tracks:
             
-            odom_track = {}
-            odom_track['x'] = track.mu[0]
-            odom_track['y'] = track.mu[1]
-            odom_track['z'] = track.mu[2]
+            odom_pos = track.get_odom_position()
             
-            track_in_base = ImageProjection.transform_detection(odom_track, trafo_odom_in_base)
+            track_in_base = ImageProjection.transform_detection(odom_pos, trafo_odom_in_base)
             base_track_array = np.squeeze(np.array([track_in_base['x'], track_in_base['y'], track_in_base['z']]))
             plot_track = np.dot(rotate_robot_to_plot, base_track_array)
             
@@ -143,19 +145,12 @@ class Visualizer:
             
             cla = track.get_class()
             
-            odom_det = {}
-            odom_det["x"] = track.mu[0]
-            odom_det["y"] = track.mu[1]
-            odom_det["z"] = track.mu[2]
+            im_bbox = track.get_image_bbox(trafo_odom_in_cam, cam_calib)
+            bbox_width = im_bbox[2]-im_bbox[0]+1
+            bbox_height = im_bbox[3]-im_bbox[1]+1
             
-            bbox_width = track.bbox[2]
-            bbox_height = track.bbox[3]
-            
-            cam_det = ImageProjection.transform_detection(odom_det, trafo_odom_in_cam)
-            im_bbox = ImageProjection.get_image_bbox(cam_det, cam_calib, bbox_width, bbox_height)
-            
-            fill_rect = Rectangle((im_bbox[0],im_bbox[1]),im_bbox[2],im_bbox[3],linewidth=2, edgecolor='none', facecolor='w', alpha=0.5)
-            rect = Rectangle((im_bbox[0],im_bbox[1]),im_bbox[2],im_bbox[3],linewidth=2,edgecolor=self.colors_box[cla],facecolor='none')
+            fill_rect = Rectangle((im_bbox[0],im_bbox[1]),bbox_width,bbox_height,linewidth=2, edgecolor='none', facecolor='w', alpha=0.5)
+            rect = Rectangle((im_bbox[0],im_bbox[1]),bbox_width,bbox_height,linewidth=2,edgecolor=self.colors_box[cla],facecolor='none')
             self.ax3.add_artist(fill_rect)
             self.ax3.add_artist(rect)
         

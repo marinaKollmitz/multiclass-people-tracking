@@ -2,24 +2,39 @@ import numpy as np
 
 class ImageProjection:
     
+    @staticmethod
+    def get_measurement(detection):
+        #a measurement is an array of the form [[im_x], [im_y], [depth]]
+        
+        im_x, im_y = ImageProjection.get_im_coordinates(detection["bbox"])
+        
+        return np.array([[im_x], [im_y], [detection['depth']]])
+    
+    @staticmethod
+    def get_im_coordinates(bbox_xyxy):
+        
+        im_x = (bbox_xyxy[0]+bbox_xyxy[2])/2.
+        im_y = (bbox_xyxy[1]+bbox_xyxy[3])/2.
+        
+        return im_x, im_y
+    
     #project from image into cartesian camera frame
     @staticmethod
-    def get_cart_detection(im_detection, cam_calib):
+    def get_cart_detection(detection, cam_calib):
         
         fx = cam_calib['fx']
         fy = cam_calib['fy']
         cx = cam_calib['cx']
         cy = cam_calib['cy']
         
-        im_x = im_detection["bbox"][0]+im_detection["bbox"][2]/2
-        im_y = im_detection["bbox"][1]+im_detection["bbox"][3]/2
+        im_x, im_y = ImageProjection.get_im_coordinates(detection["bbox"])
         
         cart_det = {}
         
         #project detection into camera frame
-        cart_det["x"] = (im_x - cx)/fx * im_detection["depth"]
-        cart_det["y"] = (im_y - cy)/fy * im_detection["depth"]
-        cart_det["z"] = im_detection["depth"]
+        cart_det["x"] = (im_x - cx)/fx * detection["depth"]
+        cart_det["y"] = (im_y - cy)/fy * detection["depth"]
+        cart_det["z"] = detection["depth"]
         
         return cart_det
     
@@ -53,7 +68,7 @@ class ImageProjection:
         
         bbox = [im_x-bbox_width/2., 
                 im_y-bbox_height/2., 
-                bbox_width, 
-                bbox_height]
+                im_x+bbox_width/2.,
+                im_y+bbox_height/2.]
         
         return bbox

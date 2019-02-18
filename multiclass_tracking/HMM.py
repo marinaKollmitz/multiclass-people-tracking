@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 plt.ion()
 
 class HMM:
-    def __init__(self, observation_model):
+    def __init__(self, observation_model, transition_prob):
         
         self.num_classes = 6
         
@@ -19,7 +19,7 @@ class HMM:
         
         #assign small transition probabilities from each class to the other
         #classes, except background
-        tr = 2e-4
+        tr = transition_prob
         hh = 1 - (self.num_classes-2)*tr
 
         self.transition_model = np.array([[1.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000], 

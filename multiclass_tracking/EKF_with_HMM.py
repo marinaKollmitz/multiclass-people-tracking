@@ -3,20 +3,29 @@ from HMM import HMM
 from image_projection import ImageProjection
 
 class EKF_with_HMM:
-
-    def __init__(self, measurement, trafo_odom_in_cam, cam_calib, 
-                 ekf_sensor_noise, hmm_observation_model, track_id, use_hmm=True):
-
-        self.track_id = track_id
-        self.bbox = measurement["bbox"]
-        self.last_det = measurement
+    
+    def __init__(self, detection, trafo_odom_in_cam, cam_calib, accel_noise,
+                 height_noise, init_vel_sigma, ekf_sensor_noise, 
+                 hmm_observation_model, hmm_transition_prob, track_id, use_hmm=True):
+        # measurement: dict with "im_x", "im_y", "depth", category_id
+        # bbox_dims: dict with "width", "height"
         
-        self.accel_noise = 15.0 #noise in acceleration, in meters/sec^2
-        self.height_noise = 0.25 #noise in height of person, in m
+        self.track_id = track_id
+        
+        #image bounding box dimensions
+        bbox = detection["bbox"]
+        self.bbox_dims = {"width": bbox[2]-bbox[0], "height": bbox[3]-bbox[1]}
+        
+        self.last_det_catid = detection["category_id"]
+        self.last_det_score = detection["score"]
+        
+        self.accel_noise = accel_noise #noise in acceleration, in meters/sec^2
+        self.height_noise = height_noise #noise in height of person, in m
         
         trafo_cam_in_odom = np.linalg.inv(trafo_odom_in_cam)
+        self.cam_calib = cam_calib
         
-        cam_det = ImageProjection.get_cart_detection(measurement, cam_calib)
+        cam_det = ImageProjection.get_cart_detection(detection, self.cam_calib)
         odom_det = ImageProjection.transform_detection(cam_det, trafo_cam_in_odom)
         
         #state: x_odom, y_odom, z_odom, vel_x_odom, vel_y_odom
@@ -26,14 +35,14 @@ class EKF_with_HMM:
         self.R = ekf_sensor_noise
         
         #initial state uncertainty
-        self.sigma = np.array([[0.0, 0.0, 0.0,    0.0,    0.0],
-                               [0.0, 0.0, 0.0,    0.0,    0.0],
-                               [0.0, 0.0, 0.0,    0.0,    0.0],
-                               [0.0, 0.0, 0.0, 1.5**2,    0.0],
-                               [0.0, 0.0, 0.0,    0.0, 1.5**2]])
+        self.sigma = np.array([[0.0, 0.0, 0.0,               0.0,               0.0],
+                               [0.0, 0.0, 0.0,               0.0,               0.0],
+                               [0.0, 0.0, 0.0,               0.0,               0.0],
+                               [0.0, 0.0, 0.0, init_vel_sigma**2,               0.0],
+                               [0.0, 0.0, 0.0,               0.0, init_vel_sigma**2]])
         
         #initialize state uncertainty of pose from measurement uncertainty
-        H = self.get_H(trafo_odom_in_cam, cam_calib)
+        H = self.get_H(trafo_odom_in_cam)
         
         H_inv = np.linalg.inv(H[0:3,0:3])
         self.sigma[0:3,0:3] = H_inv.dot(self.R).dot(H_inv.T)
@@ -42,15 +51,15 @@ class EKF_with_HMM:
         
         if self.use_hmm:
             #initialize HMM
-            self.hmm = HMM(hmm_observation_model)
-            self.hmm.update(measurement['category_id'])
+            self.hmm = HMM(hmm_observation_model, hmm_transition_prob)
+            self.hmm.update(detection['category_id'])
         
         self.updated = True
         
-    def get_H(self, trafo_odom_in_cam, cam_calib):
+    def get_H(self, trafo_odom_in_cam):
         
-        fx = cam_calib['fx']
-        fy = cam_calib['fy']
+        fx = self.cam_calib['fx']
+        fy = self.cam_calib['fy']
         
         #get the partial derivatives
         T = trafo_odom_in_cam
@@ -90,12 +99,12 @@ class EKF_with_HMM:
         
         return H
     
-    def get_z_exp(self, trafo_odom_in_cam, cam_calib):
+    def get_z_exp(self, trafo_odom_in_cam):
         
-        fx = cam_calib['fx']
-        fy = cam_calib['fy']
-        cx = cam_calib['cx']
-        cy = cam_calib['cy']
+        fx = self.cam_calib['fx']
+        fy = self.cam_calib['fy']
+        cx = self.cam_calib['cx']
+        cy = self.cam_calib['cy']
         
         #apply sensor model
         T = trafo_odom_in_cam
@@ -154,43 +163,95 @@ class EKF_with_HMM:
         if self.use_hmm:
             self.hmm.predict()
         
-    def update(self, measurement, trafo_odom_in_cam, cam_calib):
+    def update(self, detection, trafo_odom_in_cam):
         
         #measurement for Kalman filter
-        z = np.array([[measurement['im_x']], [measurement['im_y']], [measurement['depth']]])
-        H = self.get_H(trafo_odom_in_cam, cam_calib)
+        z = ImageProjection.get_measurement(detection)
+        H = self.get_H(trafo_odom_in_cam)
         
         # Kalman Gain
         K_tmp = H.dot(self.sigma).dot(np.transpose(H)) + self.R
         K = self.sigma.dot(np.transpose(H)).dot(np.linalg.inv(K_tmp))
         
         #update mu
-        z_exp = self.get_z_exp(trafo_odom_in_cam, cam_calib) #h(mu)
+        z_exp = self.get_z_exp(trafo_odom_in_cam) #h(mu)
         self.mu = self.mu + K.dot(z-z_exp)
         
         # update covariance
         self.sigma = ( np.eye(5) - K.dot(H) ).dot(self.sigma)
         
-        # new image bbox
-        self.bbox = measurement["bbox"]
-        self.last_det = measurement
+        # new image bbox dimensions
+        bbox = detection["bbox"]
+        self.bbox_dims = {"width": bbox[2]-bbox[0], "height": bbox[3]-bbox[1]}
+        
+        # category id from last detection
+        self.last_det_catid = detection["category_id"]
+        self.last_det_score = detection["score"]
 
         #update hmm
         if self.use_hmm:
-            self.hmm.update(measurement["category_id"])
+            self.hmm.update(detection["category_id"])
             
     def get_class(self):
         if self.use_hmm:
             return self.hmm.get_max_class()
         else:
-            return self.last_det["category_id"]
+            return self.last_det_catid
         
     def get_score(self):
         if self.use_hmm:
             return self.hmm.get_max_score()
         else:
-            return self.last_det["score"]
+            return self.last_det_score
+    
+    def get_odom_position(self):
+        odom_pos = {}
+        odom_pos["x"] = self.mu[0,0]
+        odom_pos["y"] = self.mu[1,0]
+        odom_pos["z"] = self.mu[2,0]
         
+        return odom_pos
+    
+    def get_odom_velocity(self):
+        odom_vel = {}
+        odom_vel["x"] = self.mu[3,0]
+        odom_vel["y"] = self.mu[4,0]
+        odom_vel["z"] = 0.0
+        
+        return odom_vel
+    
+    def get_cam_position(self, trafo_odom_in_cam):
+        odom_pos = self.get_odom_position()
+        cam_pos = ImageProjection.transform_detection(odom_pos, trafo_odom_in_cam)
+        
+        return cam_pos
+    
+    def get_depth(self, trafo_odom_in_cam):
+        cam_pos = self.get_cam_position(trafo_odom_in_cam)
+        return cam_pos["z"]
+    
+    def get_track_detection(self, trafo_odom_in_cam):
+        track_det = {}
+        track_det["bbox"] = self.get_image_bbox(trafo_odom_in_cam)
+        track_det["score"] = self.get_score()
+        track_det["depth"] = self.get_depth(trafo_odom_in_cam)
+        track_det["category_id"] = self.get_class()
+        
+        return track_det
+    
+    def get_image_bbox(self, trafo_odom_in_cam):
+        #TODO width expected measurement z_exp?
+        cam_det = self.get_cam_position(trafo_odom_in_cam)
+        im_bbox = ImageProjection.get_image_bbox(cam_det, self.cam_calib, 
+                                                 self.bbox_dims["width"], 
+                                                 self.bbox_dims["height"])
+        
+        return im_bbox #xyxy format
+    
+    def get_covariance(self):
+        return self.sigma
+    
     def update_with_background(self):
+        
         if self.use_hmm:
             self.hmm.update(0)
